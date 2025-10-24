@@ -664,125 +664,139 @@ if show_debug_table
 // ============================================
 
 if show_stats_tables
-    // Table 1: TOP-RIGHT - Models and Status
-    var table main_table = table.new(position.top_right, 3, 11, bgcolor=color.new(color.black, 85), border_width=1)
+    // UNIFIED TABLE - Combines Models, Features, and Performance
+    var table unified_table = table.new(position.top_right, 3, 29, bgcolor=color.new(color.black, 85), border_width=2)
 
     if barstate.islast
-        table.cell(main_table, 0, 0, "MODEL", text_color=color.white, bgcolor=color.new(color.blue, 70))
-        table.cell(main_table, 1, 0, "PREDICTION", text_color=color.white, bgcolor=color.new(color.blue, 70))
-        table.cell(main_table, 2, 0, "WEIGHT", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        // ===== SECTION 1: MODELS =====
+        table.cell(unified_table, 0, 0, "MODEL", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(unified_table, 1, 0, "PREDICTION", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(unified_table, 2, 0, "WEIGHT", text_color=color.white, bgcolor=color.new(color.blue, 70))
 
-        table.cell(main_table, 0, 1, "Decision Tree", text_color=color.white)
-        table.cell(main_table, 1, 1, str.tostring(dt_prediction, "#.###"), text_color=color.yellow)
-        table.cell(main_table, 2, 1, str.tostring(dt_weight * 100, "#.#") + "%", text_color=color.orange)
+        table.cell(unified_table, 0, 1, "Decision Tree", text_color=color.white)
+        table.cell(unified_table, 1, 1, str.tostring(dt_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 1, str.tostring(dt_weight * 100, "#.#") + "%", text_color=color.orange)
 
-        table.cell(main_table, 0, 2, "Linear Reg", text_color=color.white)
-        table.cell(main_table, 1, 2, str.tostring(lr_prediction, "#.###"), text_color=color.yellow)
-        table.cell(main_table, 2, 2, str.tostring(lr_weight * 100, "#.#") + "%", text_color=color.orange)
+        table.cell(unified_table, 0, 2, "Linear Reg", text_color=color.white)
+        table.cell(unified_table, 1, 2, str.tostring(lr_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 2, str.tostring(lr_weight * 100, "#.#") + "%", text_color=color.orange)
 
-        table.cell(main_table, 0, 3, "KNN", text_color=color.white)
-        table.cell(main_table, 1, 3, str.tostring(knn_prediction, "#.###"), text_color=color.yellow)
-        table.cell(main_table, 2, 3, str.tostring(knn_weight * 100, "#.#") + "%", text_color=color.orange)
+        table.cell(unified_table, 0, 3, "KNN", text_color=color.white)
+        table.cell(unified_table, 1, 3, str.tostring(knn_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 3, str.tostring(knn_weight * 100, "#.#") + "%", text_color=color.orange)
 
-        table.cell(main_table, 0, 4, "─────────", text_color=color.gray)
-        table.cell(main_table, 1, 4, "─────────", text_color=color.gray)
-        table.cell(main_table, 2, 4, "─────────", text_color=color.gray)
+        table.cell(unified_table, 0, 4, "─────────", text_color=color.gray)
+        table.cell(unified_table, 1, 4, "─────────", text_color=color.gray)
+        table.cell(unified_table, 2, 4, "─────────", text_color=color.gray)
 
-        table.cell(main_table, 0, 5, "ENSEMBLE", text_color=color.white, bgcolor=color.new(color.purple, 70))
-        table.cell(main_table, 1, 5, str.tostring(ensemble_prediction, "#.###"), text_color=color.lime, bgcolor=color.new(color.purple, 70))
-        table.cell(main_table, 2, 5, str.tostring(confidence * 100, "#.#") + "%", text_color=color.aqua, bgcolor=color.new(color.purple, 70))
+        table.cell(unified_table, 0, 5, "ENSEMBLE", text_color=color.white, bgcolor=color.new(color.purple, 70))
+        table.cell(unified_table, 1, 5, str.tostring(ensemble_prediction, "#.###"), text_color=color.lime, bgcolor=color.new(color.purple, 70))
+        table.cell(unified_table, 2, 5, str.tostring(confidence * 100, "#.#") + "%", text_color=color.aqua, bgcolor=color.new(color.purple, 70))
 
-        table.cell(main_table, 0, 6, "─────────", text_color=color.gray)
-        table.cell(main_table, 1, 6, "─────────", text_color=color.gray)
-        table.cell(main_table, 2, 6, "─────────", text_color=color.gray)
+        table.cell(unified_table, 0, 6, "─────────", text_color=color.gray)
+        table.cell(unified_table, 1, 6, "─────────", text_color=color.gray)
+        table.cell(unified_table, 2, 6, "─────────", text_color=color.gray)
 
-        table.cell(main_table, 0, 7, "Regime", text_color=color.white)
-        table.cell(main_table, 1, 7, current_regime, text_color=color.yellow)
-        table.cell(main_table, 2, 7, str.tostring(regime_score, "#.##"), text_color=color.orange)
+        table.cell(unified_table, 0, 7, "Regime", text_color=color.white)
+        table.cell(unified_table, 1, 7, current_regime, text_color=color.yellow)
+        table.cell(unified_table, 2, 7, str.tostring(regime_score, "#.##"), text_color=color.orange)
 
-        table.cell(main_table, 0, 8, "Threshold", text_color=color.white)
-        table.cell(main_table, 1, 8, str.tostring(threshold_adaptive, "#.###"), text_color=color.yellow)
-        table.cell(main_table, 2, 8, trading_style, text_color=color.orange)
+        table.cell(unified_table, 0, 8, "Threshold", text_color=color.white)
+        table.cell(unified_table, 1, 8, str.tostring(threshold_adaptive, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 8, trading_style, text_color=color.orange)
 
-        table.cell(main_table, 0, 9, "Position Size", text_color=color.white)
-        table.cell(main_table, 1, 9, str.tostring(position_size, "#.#") + "%", text_color=color.yellow)
-        table.cell(main_table, 2, 9, use_kelly ? "Kelly" : "Fixed", text_color=color.orange)
+        table.cell(unified_table, 0, 9, "Position Size", text_color=color.white)
+        table.cell(unified_table, 1, 9, str.tostring(position_size, "#.#") + "%", text_color=color.yellow)
+        table.cell(unified_table, 2, 9, use_kelly ? "Kelly" : "Fixed", text_color=color.orange)
 
-        table.cell(main_table, 0, 10, "Drawdown", text_color=color.white)
-        table.cell(main_table, 1, 10, str.tostring(current_dd * 100, "#.#") + "%",
+        table.cell(unified_table, 0, 10, "Drawdown", text_color=color.white)
+        table.cell(unified_table, 1, 10, str.tostring(current_dd * 100, "#.#") + "%",
                    text_color=current_dd > dd_stop_threshold ? color.red : color.green)
-        table.cell(main_table, 2, 10, use_dd_protection ? "Protected" : "Off", text_color=color.orange)
+        table.cell(unified_table, 2, 10, use_dd_protection ? "Protected" : "Off", text_color=color.orange)
 
-    // Table 2: BOTTOM-LEFT - 8 Features
-    var table feat_table = table.new(position.bottom_left, 2, 9, bgcolor=color.new(color.black, 75), border_width=2)
+        // ===== SECTION 2: FEATURES =====
+        table.cell(unified_table, 0, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 1, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 2, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
 
-    if barstate.islast
-        table.cell(feat_table, 0, 0, "FEATURE", text_color=color.white, bgcolor=color.new(color.green, 70))
-        table.cell(feat_table, 1, 0, "VALUE", text_color=color.white, bgcolor=color.new(color.green, 70))
+        table.cell(unified_table, 0, 12, "FEATURES", text_color=color.white, bgcolor=color.new(color.green, 70))
+        table.cell(unified_table, 1, 12, "VALUE", text_color=color.white, bgcolor=color.new(color.green, 70))
+        table.cell(unified_table, 2, 12, "", text_color=color.white, bgcolor=color.new(color.green, 70))
 
-        table.cell(feat_table, 0, 1, "F1: Momentum", text_color=color.white)
-        table.cell(feat_table, 1, 1, str.tostring(f_momentum_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 13, "F1: Momentum", text_color=color.white)
+        table.cell(unified_table, 1, 13, str.tostring(f_momentum_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 13, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 2, "F2: Volatility", text_color=color.white)
-        table.cell(feat_table, 1, 2, str.tostring(f_volatility_structure, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 14, "F2: Volatility", text_color=color.white)
+        table.cell(unified_table, 1, 14, str.tostring(f_volatility_structure, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 14, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 3, "F3: Price Action", text_color=color.white)
-        table.cell(feat_table, 1, 3, str.tostring(f_price_action, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 15, "F3: Price Action", text_color=color.white)
+        table.cell(unified_table, 1, 15, str.tostring(f_price_action, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 15, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 4, "F4: Volume", text_color=color.white)
-        table.cell(feat_table, 1, 4, str.tostring(f_volume_profile, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 16, "F4: Volume", text_color=color.white)
+        table.cell(unified_table, 1, 16, str.tostring(f_volume_profile, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 16, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 5, "F5: Mean Rev", text_color=color.white)
-        table.cell(feat_table, 1, 5, str.tostring(f_mean_reversion, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 17, "F5: Mean Rev", text_color=color.white)
+        table.cell(unified_table, 1, 17, str.tostring(f_mean_reversion, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 17, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 6, "F6: Trend Qual", text_color=color.white)
-        table.cell(feat_table, 1, 6, str.tostring(f_trend_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 18, "F6: Trend Qual", text_color=color.white)
+        table.cell(unified_table, 1, 18, str.tostring(f_trend_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 18, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 7, "F7: MTF Align", text_color=color.white)
-        table.cell(feat_table, 1, 7, str.tostring(f_mtf_alignment, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 19, "F7: MTF Align", text_color=color.white)
+        table.cell(unified_table, 1, 19, str.tostring(f_mtf_alignment, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 19, "", text_color=color.white)
 
-        table.cell(feat_table, 0, 8, "F8: Regime", text_color=color.white)
-        table.cell(feat_table, 1, 8, str.tostring(f_market_regime, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 0, 20, "F8: Regime", text_color=color.white)
+        table.cell(unified_table, 1, 20, str.tostring(f_market_regime, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 20, "", text_color=color.white)
 
-    // Table 3: BOTTOM-RIGHT - Performance
-    var table perf_table = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 75), border_width=2)
+        // ===== SECTION 3: PERFORMANCE =====
+        table.cell(unified_table, 0, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 1, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 2, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
 
-    if barstate.islast
         net_profit = strategy.netprofit
         num_trades = strategy.closedtrades
         percent_profitable = num_trades > 0 ? strategy.wintrades / num_trades * 100 : 0
         profit_factor = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0
         avg_trade = num_trades > 0 ? net_profit / num_trades : 0
         max_dd_pct = strategy.max_drawdown / strategy.initial_capital * 100
-
         sharpe_approx = num_trades > 10 ? (avg_trade / ta.stdev(close, num_trades)) * math.sqrt(num_trades) : 0
 
-        table.cell(perf_table, 0, 0, "PERFORMANCE", text_color=color.white, bgcolor=color.new(color.orange, 70))
-        table.cell(perf_table, 1, 0, "VALUE", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(unified_table, 0, 22, "PERFORMANCE", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(unified_table, 1, 22, "VALUE", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(unified_table, 2, 22, "", text_color=color.white, bgcolor=color.new(color.orange, 70))
 
-        table.cell(perf_table, 0, 1, "Net Profit", text_color=color.white)
-        table.cell(perf_table, 1, 1, str.tostring(net_profit, "#.##"),
+        table.cell(unified_table, 0, 23, "Net Profit", text_color=color.white)
+        table.cell(unified_table, 1, 23, str.tostring(net_profit, "#.##"),
                    text_color=net_profit > 0 ? color.lime : color.red)
+        table.cell(unified_table, 2, 23, "", text_color=color.white)
 
-        table.cell(perf_table, 0, 2, "Total Trades", text_color=color.white)
-        table.cell(perf_table, 1, 2, str.tostring(num_trades), text_color=color.yellow)
+        table.cell(unified_table, 0, 24, "Total Trades", text_color=color.white)
+        table.cell(unified_table, 1, 24, str.tostring(num_trades), text_color=color.yellow)
+        table.cell(unified_table, 2, 24, "", text_color=color.white)
 
-        table.cell(perf_table, 0, 3, "Win Rate", text_color=color.white)
-        table.cell(perf_table, 1, 3, str.tostring(percent_profitable, "#.#") + "%",
+        table.cell(unified_table, 0, 25, "Win Rate", text_color=color.white)
+        table.cell(unified_table, 1, 25, str.tostring(percent_profitable, "#.#") + "%",
                    text_color=percent_profitable > 50 ? color.lime : color.red)
+        table.cell(unified_table, 2, 25, "", text_color=color.white)
 
-        table.cell(perf_table, 0, 4, "Profit Factor", text_color=color.white)
-        table.cell(perf_table, 1, 4, str.tostring(profit_factor, "#.##"),
+        table.cell(unified_table, 0, 26, "Profit Factor", text_color=color.white)
+        table.cell(unified_table, 1, 26, str.tostring(profit_factor, "#.##"),
                    text_color=profit_factor > 1 ? color.lime : color.red)
+        table.cell(unified_table, 2, 26, "", text_color=color.white)
 
-        table.cell(perf_table, 0, 5, "Avg Trade", text_color=color.white)
-        table.cell(perf_table, 1, 5, str.tostring(avg_trade, "#.##"),
-                   text_color=avg_trade > 0 ? color.lime : color.red)
+        table.cell(unified_table, 0, 27, "Avg Trade / Max DD", text_color=color.white)
+        table.cell(unified_table, 1, 27, str.tostring(avg_trade, "#.##") + " / " + str.tostring(max_dd_pct, "#.#") + "%",
+                   text_color=color.yellow)
+        table.cell(unified_table, 2, 27, "", text_color=color.white)
 
-        table.cell(perf_table, 0, 6, "Max DD %", text_color=color.white)
-        table.cell(perf_table, 1, 6, str.tostring(max_dd_pct, "#.##") + "%",
-                   text_color=max_dd_pct < 20 ? color.lime : color.red)
-
-        table.cell(perf_table, 0, 7, "Sharpe (est)", text_color=color.white)
-        table.cell(perf_table, 1, 7, str.tostring(sharpe_approx, "#.##"),
+        table.cell(unified_table, 0, 28, "Sharpe (est)", text_color=color.white)
+        table.cell(unified_table, 1, 28, str.tostring(sharpe_approx, "#.##"),
                    text_color=sharpe_approx > 1 ? color.lime : sharpe_approx > 0 ? color.yellow : color.red)
+        table.cell(unified_table, 2, 28, "", text_color=color.white)
