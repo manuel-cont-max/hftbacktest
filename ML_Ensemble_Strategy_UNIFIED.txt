@@ -1,5 +1,5 @@
 //@version=5
-strategy("ML Ensemble PRO v4.1 - Optimized", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
+strategy("ML Ensemble PRO v4.2 - SAFE", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
 
 // ============================================
 // PARAMETERS - OPTIMIZED FOR MORE TRADES
