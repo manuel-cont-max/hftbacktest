@@ -1,0 +1,802 @@
+//@version=5
+strategy("ML Ensemble PRO v4.1 - Optimized", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
+
+// ============================================
+// PARAMETERS - OPTIMIZED FOR MORE TRADES
+// ============================================
+
+// Trading Style: Changed default from "Conservative" to "Balanced"
+trading_style = input.string("Balanced", "Trading Style", options=["Aggressive", "Balanced", "Conservative"])
+
+// Threshold: Reduced from 0.60 to 0.52 for more signals
+threshold_base = input.float(0.52, "Base Signal Threshold", minval=0.40, maxval=0.70, step=0.01, tooltip="Lower = More trades. Balanced default: 0.52")
+
+// Strong Signals: Changed default from true to false
+only_strong_signals = input.bool(false, "Only Trade Strong Signals", tooltip="When enabled, requires both confidence>0.6 AND prediction>0.7. DISABLE for more trades")
+
+// Multi-Timeframe: Changed default from true to false
+use_mtf = input.bool(false, "Enable Multi-Timeframe Confirmation", tooltip="Requires Daily timeframe alignment. DISABLE for more trades")
+mtf_timeframe = input.timeframe("D", "Higher Timeframe")
+
+// Drawdown Protection: Keep enabled but with relaxed parameters
+use_dd_protection = input.bool(true, "Enable Drawdown Protection")
+dd_stop_threshold = input.float(0.20, "Drawdown Stop Threshold", minval=0.05, maxval=0.50, step=0.01, tooltip="Stops trading when drawdown exceeds this %")
+min_trades_before_dd = input.int(10, "Min Trades Before DD Check", minval=5, maxval=50, tooltip="Wait for this many trades before checking drawdown")
+
+// Time Filter: More permissive default (allow all times)
+use_time_filter = input.bool(false, "Enable Time Filter", tooltip="DISABLE to allow trading at all times")
+start_hour = input.int(9, "Start Hour", minval=0, maxval=23)
+end_hour = input.int(16, "End Hour", minval=0, maxval=23)
+
+// Position Sizing
+use_kelly = input.bool(true, "Use Kelly Criterion")
+kelly_fraction = input.float(0.25, "Kelly Fraction", minval=0.01, maxval=1.0, step=0.01)
+max_position_size = input.float(0.30, "Max Position Size (%)", minval=0.05, maxval=0.50, step=0.05, tooltip="SAFETY: Max 50% to protect capital")
+
+// Risk Management
+use_stops = input.bool(true, "Enable Stop Loss/Take Profit")
+stop_loss_pct = input.float(2.0, "Stop Loss %", minval=0.1, maxval=10.0, step=0.1)
+take_profit_pct = input.float(4.0, "Take Profit %", minval=0.1, maxval=20.0, step=0.1)
+use_trailing = input.bool(true, "Use Trailing Stop")
+trailing_offset_pct = input.float(1.5, "Trailing Stop Offset %", minval=0.1, maxval=5.0, step=0.1)
+
+// Model Parameters
+knn_samples = input.int(50, "KNN Samples", minval=10, maxval=200, step=10)
+knn_kernel = input.string("Gaussian", "KNN Kernel", options=["Gaussian", "Inverse", "Uniform"])
+predict_ahead = input.int(5, "Prediction Horizon (bars)", minval=1, maxval=20)
+
+// Regime Parameters
+adx_threshold = input.float(25, "ADX Threshold", minval=10, maxval=50)
+atr_period = input.int(14, "ATR Period", minval=5, maxval=50)
+
+// Adaptive Learning
+use_adaptive_weights = input.bool(true, "Use Adaptive Model Weights")
+learning_window = input.int(50, "Learning Window", minval=20, maxval=200)
+
+// Debug Mode
+show_debug_table = input.bool(true, "Show Debug Table", tooltip="Shows which filters are blocking trades")
+show_stats_tables = input.bool(true, "Show Statistics Tables")
+
+// ============================================
+// HELPER FUNCTIONS
+// ============================================
+
+normalize_zscore(val, len) =>
+    mean = ta.sma(val, len)
+    std = ta.stdev(val, len)
+    std > 0 ? (val - mean) / std : 0.0
+
+normalize_minmax(val, len) =>
+    highest = ta.highest(val, len)
+    lowest = ta.lowest(val, len)
+    value_range = highest - lowest
+    value_range > 0 ? (val - lowest) / value_range : 0.5
+
+// ============================================
+// TECHNICAL INDICATORS
+// ============================================
+
+rsi = ta.rsi(close, 14)
+[macd_line, signal_line, hist_macd] = ta.macd(close, 12, 26, 9)
+[bb_basis, bb_upper, bb_lower] = ta.bb(close, 20, 2)
+atr = ta.atr(atr_period)
+obv = ta.obv
+stoch_k = ta.stoch(close, high, low, 14)
+vwap_val = ta.vwap(hlc3)
+
+ma_20 = ta.sma(close, 20)
+ma_50 = ta.sma(close, 50)
+ma_200 = ta.sma(close, 200)
+
+// Volume
+avg_volume = ta.sma(volume, 20)
+volume_ratio = volume / avg_volume
+
+// ATR for volatility
+atr_sma = ta.sma(atr, 14)
+atr_ratio = atr / atr_sma
+
+// Bollinger Bands width
+bb_width = (bb_upper - bb_lower) / bb_basis
+bb_width_sma = ta.sma(bb_width, 50)
+bb_width_percentile = bb_width / bb_width_sma
+
+// ============================================
+// REGIME DETECTION
+// ============================================
+
+calculate_regime() =>
+    var string regime_name = "RANGE"
+    var float regime_score = 0.5
+
+    [plus_di, minus_di, adx_val] = ta.dmi(14, 14)
+
+    if adx_val > adx_threshold
+        if plus_di > minus_di
+            regime_name := "TREND_UP"
+            regime_score := 0.75 + (adx_val - adx_threshold) / 100 * 0.25
+        else
+            regime_name := "TREND_DOWN"
+            regime_score := 0.25 - (adx_val - adx_threshold) / 100 * 0.25
+    else
+        if atr_ratio > 1.5
+            regime_name := "VOLATILE"
+            regime_score := 0.5
+        else
+            regime_name := "RANGE"
+            regime_score := 0.5
+
+    [regime_name, regime_score]
+
+[current_regime, regime_score] = calculate_regime()
+
+// ============================================
+// MULTI-TIMEFRAME ANALYSIS
+// ============================================
+
+htf_close = request.security(syminfo.tickerid, mtf_timeframe, close)
+htf_ma_20 = request.security(syminfo.tickerid, mtf_timeframe, ta.sma(close, 20))
+htf_ma_50 = request.security(syminfo.tickerid, mtf_timeframe, ta.sma(close, 50))
+
+htf_bullish = htf_close > htf_ma_20 and htf_ma_20 > htf_ma_50
+htf_bearish = htf_close < htf_ma_20 and htf_ma_20 < htf_ma_50
+htf_trend_strong = math.abs(htf_close - htf_ma_20) / htf_ma_20 > 0.02
+
+mtf_alignment = htf_bullish ? 1.0 : htf_bearish ? 0.0 : 0.5
+
+// ============================================
+// FEATURE ENGINEERING (8 FEATURES)
+// ============================================
+
+// Feature 1: Momentum Quality
+consecutive_up = 0
+for i = 0 to 4
+    if close[i] > close[i + 1]
+        consecutive_up += 1
+
+rsi_normalized = rsi / 100
+macd_normalized = normalize_minmax(hist_macd, 50)
+momentum_bars = consecutive_up / 5.0
+
+f_momentum_quality = (rsi_normalized * 0.4) + (macd_normalized * 0.3) + (momentum_bars * 0.3)
+
+// Feature 2: Volatility Structure
+hvol_20 = ta.stdev(close / close[1] - 1, 20)
+hvol_50 = ta.stdev(close / close[1] - 1, 50)
+hvol_rank = hvol_20 > hvol_50 ? 1.0 : hvol_20 / hvol_50
+
+atr_component = normalize_minmax(atr_ratio, 50)
+bb_component = bb_width_percentile > 1 ? 1.0 : bb_width_percentile
+hvol_component = hvol_rank
+
+f_volatility_structure = (atr_component * 0.4) + (bb_component * 0.3) + (hvol_component * 0.3)
+
+// Feature 3: Price Action Patterns
+is_bullish_candle = close > open ? 1.0 : 0.0
+body_size = math.abs(close - open)
+candle_range = high - low
+body_pct = candle_range > 0 ? body_size / candle_range : 0.0
+
+higher_highs = 0
+higher_lows = 0
+for i = 1 to 5
+    if high[i-1] > high[i]
+        higher_highs += 1
+    if low[i-1] > low[i]
+        higher_lows += 1
+
+uptrend_structure = (higher_highs + higher_lows) / 10.0
+
+lower_highs = 0
+lower_lows = 0
+for i = 1 to 5
+    if high[i-1] < high[i]
+        lower_highs += 1
+    if low[i-1] < low[i]
+        lower_lows += 1
+
+downtrend_structure = (lower_highs + lower_lows) / 10.0
+
+f_price_action = (is_bullish_candle * 0.3) + (uptrend_structure * 0.4) - (downtrend_structure * 0.1) + (body_pct * 0.2)
+
+// Feature 4: Volume Profile
+obv_ma = ta.sma(obv, 20)
+obv_trend = obv > obv_ma ? 1.0 : 0.0
+
+volume_surge = volume_ratio > 1.5 ? 1.0 : volume_ratio / 1.5
+
+above_vwap = close > vwap_val ? 1.0 : 0.0
+
+price_up = close > close[1] ? 1.0 : 0.0
+vol_up = volume > volume[1] ? 1.0 : 0.0
+volume_price_aligned = price_up == vol_up ? 1.0 : 0.0
+
+f_volume_profile = (obv_trend * 0.4) + (volume_surge * 0.2) + (above_vwap * 0.25) + (volume_price_aligned * 0.15)
+
+// Feature 5: Mean Reversion Potential
+zscore_close = normalize_zscore(close, 20)
+zscore_normalized = (zscore_close + 3) / 6
+zscore_normalized := zscore_normalized > 1 ? 1.0 : zscore_normalized < 0 ? 0.0 : zscore_normalized
+
+vwap_distance = (close - vwap_val) / vwap_val
+vwap_deviation = math.abs(vwap_distance) > 0.05 ? 1.0 : math.abs(vwap_distance) / 0.05
+
+bb_position = (close - bb_lower) / (bb_upper - bb_lower)
+bb_extreme = bb_position > 0.8 or bb_position < 0.2 ? 1.0 : 0.0
+
+f_mean_reversion = (math.abs(zscore_normalized - 0.5) * 2 * 0.35) + (vwap_deviation * 0.25) + (bb_extreme * 0.4)
+
+// Feature 6: Trend Quality and Strength
+[plus_di, minus_di, adx_val] = ta.dmi(14, 14)
+trend_strength_adx = adx_val / 100
+
+ma_alignment = 0.0
+if ma_20 > ma_50 and ma_50 > ma_200
+    ma_alignment := 1.0
+else if ma_20 < ma_50 and ma_50 < ma_200
+    ma_alignment := 0.0
+else
+    ma_alignment := 0.5
+
+price_above_mas = close > ma_20 and close > ma_50 ? 1.0 : close < ma_20 and close < ma_50 ? 0.0 : 0.5
+
+consistent_trend = 0
+for i = 0 to 9
+    if close[i] > ma_20[i]
+        consistent_trend += 1
+
+trend_consistency = consistent_trend / 10.0
+
+f_trend_quality = (trend_strength_adx * 0.35) + (ma_alignment * 0.3) + (price_above_mas * 0.15) + (trend_consistency * 0.2)
+
+// Feature 7: Multi-Timeframe Alignment
+f_mtf_alignment = (mtf_alignment * 0.6) + (htf_bullish ? 0.25 : 0.0) + (htf_trend_strong ? 0.15 : 0.0)
+
+// Feature 8: Market Regime Score
+f_market_regime = regime_score
+
+// ============================================
+// MACHINE LEARNING MODELS
+// ============================================
+
+// Model 1: Decision Tree
+decision_tree_predict() =>
+    var float prediction = 0.5
+
+    if f_trend_quality > 0.6 and f_mtf_alignment > 0.6
+        if f_momentum_quality > 0.6
+            if f_volatility_structure > 0.5
+                prediction := 0.85
+            else
+                prediction := 0.75
+        else if f_mean_reversion > 0.6
+            prediction := 0.70
+        else
+            prediction := 0.55
+    else if f_trend_quality < 0.4 and f_mtf_alignment < 0.4
+        if f_momentum_quality < 0.4
+            prediction := 0.15
+        else if f_mean_reversion > 0.6
+            prediction := 0.45
+        else
+            prediction := 0.30
+    else
+        if f_volume_profile > 0.6 and f_momentum_quality > 0.5
+            prediction := 0.65
+        else if f_volume_profile < 0.4 and f_momentum_quality < 0.5
+            prediction := 0.35
+        else
+            prediction := 0.50
+
+    prediction
+
+dt_prediction = decision_tree_predict()
+
+// Model 2: Linear Regression
+linear_regression_predict() =>
+    b0 = 0.50
+    b1 = 0.15
+    b2 = 0.10
+    b3 = 0.08
+    b4 = 0.12
+    b5 = -0.05
+    b6 = 0.20
+    b7 = 0.15
+    b8 = 0.10
+
+    prediction = b0 + (b1 * f_momentum_quality) + (b2 * f_volatility_structure) + (b3 * f_price_action) + (b4 * f_volume_profile) + (b5 * f_mean_reversion) + (b6 * f_trend_quality) + (b7 * f_mtf_alignment) + (b8 * f_market_regime)
+
+    prediction := prediction > 1.0 ? 1.0 : prediction < 0.0 ? 0.0 : prediction
+    prediction
+
+lr_prediction = linear_regression_predict()
+
+// Model 3: K-Nearest Neighbors
+knn_predict() =>
+    k = 5
+    var array<float> distances = array.new_float(0)
+    var array<float> labels = array.new_float(0)
+    var array<float> weights = array.new_float(0)
+
+    array.clear(distances)
+    array.clear(labels)
+    array.clear(weights)
+
+    // Assicurati che non accediamo a dati troppo lontani
+    // bar_index deve essere abbastanza grande da permettere lookback + predict_ahead
+    safe_lookback = math.min(knn_samples, bar_index - predict_ahead - 1)
+    start_offset = predict_ahead + 1
+    end_offset = start_offset + safe_lookback - 1
+
+    if bar_index > (predict_ahead * 2) and safe_lookback > 0
+        for i = start_offset to end_offset
+            // Verifica che l'accesso sia sicuro
+            if i <= bar_index - 1 and (i - predict_ahead) >= 0
+                f1_past = f_momentum_quality[i]
+                f2_past = f_volatility_structure[i]
+                f3_past = f_price_action[i]
+                f4_past = f_volume_profile[i]
+                f5_past = f_mean_reversion[i]
+                f6_past = f_trend_quality[i]
+                f7_past = f_mtf_alignment[i]
+                f8_past = f_market_regime[i]
+
+                d1 = f_momentum_quality - f1_past
+                d2 = f_volatility_structure - f2_past
+                d3 = f_price_action - f3_past
+                d4 = f_volume_profile - f4_past
+                d5 = f_mean_reversion - f5_past
+                d6 = f_trend_quality - f6_past
+                d7 = f_mtf_alignment - f7_past
+                d8 = f_market_regime - f8_past
+
+                distance = math.sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4 + d5*d5 + d6*d6 + d7*d7 + d8*d8)
+
+                label = close[i - predict_ahead] > close[i] ? 1.0 : 0.0
+
+                array.push(distances, distance)
+                array.push(labels, label)
+
+    if array.size(distances) >= k
+        for i = 0 to k - 1
+            min_dist = array.get(distances, 0)
+            min_idx = 0
+
+            for j = 0 to array.size(distances) - 1
+                if array.get(distances, j) < min_dist
+                    min_dist := array.get(distances, j)
+                    min_idx := j
+
+            label = array.get(labels, min_idx)
+
+            weight = 1.0
+            if knn_kernel == "Gaussian"
+                weight := math.exp(-min_dist * min_dist / 2)
+            else if knn_kernel == "Inverse"
+                weight := min_dist > 0 ? 1.0 / (1.0 + min_dist) : 1.0
+            else
+                weight := 1.0
+
+            array.push(weights, weight)
+
+            array.remove(distances, min_idx)
+            array.remove(labels, min_idx)
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+
+    if array.size(weights) > 0
+        for i = 0 to array.size(weights) - 1
+            weighted_sum += array.get(weights, i)
+            weight_total += array.get(weights, i)
+
+    prediction = weight_total > 0 ? weighted_sum / weight_total : 0.5
+    prediction
+
+knn_prediction = knn_predict()
+
+// ============================================
+// ADAPTIVE WEIGHTS
+// ============================================
+
+var array<float> dt_accuracy = array.new_float(0)
+var array<float> lr_accuracy = array.new_float(0)
+var array<float> knn_accuracy = array.new_float(0)
+
+if use_adaptive_weights and bar_index >= predict_ahead
+    dt_past = dt_prediction[predict_ahead]
+    lr_past = lr_prediction[predict_ahead]
+    knn_past = knn_prediction[predict_ahead]
+
+    actual = close > close[predict_ahead] ? 1.0 : 0.0
+
+    dt_error = math.abs(dt_past - actual)
+    lr_error = math.abs(lr_past - actual)
+    knn_error = math.abs(knn_past - actual)
+
+    array.push(dt_accuracy, 1 - dt_error)
+    array.push(lr_accuracy, 1 - lr_error)
+    array.push(knn_accuracy, 1 - knn_error)
+
+    if array.size(dt_accuracy) > learning_window
+        array.shift(dt_accuracy)
+        array.shift(lr_accuracy)
+        array.shift(knn_accuracy)
+
+dt_weight = 0.33
+lr_weight = 0.33
+knn_weight = 0.34
+
+if use_adaptive_weights and array.size(dt_accuracy) >= 20
+    dt_avg = array.avg(dt_accuracy)
+    lr_avg = array.avg(lr_accuracy)
+    knn_avg = array.avg(knn_accuracy)
+
+    total = dt_avg + lr_avg + knn_avg
+
+    if total > 0
+        dt_weight := dt_avg / total
+        lr_weight := lr_avg / total
+        knn_weight := knn_avg / total
+
+// ============================================
+// ENSEMBLE PREDICTION
+// ============================================
+
+ensemble_prediction = (dt_prediction * dt_weight) + (lr_prediction * lr_weight) + (knn_prediction * knn_weight)
+
+confidence = 1.0 - (math.abs(dt_prediction - lr_prediction) + math.abs(lr_prediction - knn_prediction) + math.abs(knn_prediction - dt_prediction)) / 3.0
+
+// ============================================
+// ADAPTIVE THRESHOLD
+// ============================================
+
+threshold_adaptive = threshold_base
+
+if trading_style == "Aggressive"
+    threshold_adaptive := threshold_base - 0.05
+else if trading_style == "Conservative"
+    threshold_adaptive := threshold_base + 0.08
+
+// ============================================
+// POSITION SIZING
+// ============================================
+
+var int total_trades = 0
+var int winning_trades = 0
+var float total_pnl = 0.0
+var float max_equity = strategy.initial_capital
+var float current_dd = 0.0
+
+if strategy.closedtrades > total_trades
+    total_trades := strategy.closedtrades
+    trade_pnl = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    total_pnl += trade_pnl
+
+    if trade_pnl > 0
+        winning_trades += 1
+
+    current_equity = strategy.equity
+    if current_equity > max_equity
+        max_equity := current_equity
+
+    current_dd := max_equity > 0 ? (max_equity - current_equity) / max_equity : 0.0
+
+win_rate = total_trades > 0 ? winning_trades / total_trades : 0.5
+
+kelly_size = 0.30  // Default sicuro al 30%
+if use_kelly and total_trades >= 10
+    avg_win = winning_trades > 0 ? total_pnl / winning_trades : 0.0
+    avg_loss = (total_trades - winning_trades) > 0 ? math.abs(total_pnl - (avg_win * winning_trades)) / (total_trades - winning_trades) : 0.0
+
+    if avg_loss > 0
+        win_loss_ratio = avg_win / avg_loss
+        kelly_pct = (win_rate * win_loss_ratio - (1 - win_rate)) / win_loss_ratio
+        kelly_size := kelly_pct > 0 ? kelly_pct * kelly_fraction : 0.10
+
+    // PROTEZIONE: limita sempre tra 5% e max_position_size
+    kelly_size := kelly_size > max_position_size ? max_position_size : kelly_size < 0.05 ? 0.05 : kelly_size
+else
+    // Se Kelly non è attivo o non ci sono abbastanza trade, usa il 30%
+    kelly_size := 0.30
+
+calculate_dd_adjusted_position(base_pos) =>
+    if not use_dd_protection or total_trades < min_trades_before_dd
+        base_pos
+    else
+        if current_dd > dd_stop_threshold
+            0.0
+        else
+            dd_factor = 1.0 - (current_dd / dd_stop_threshold)
+            base_pos * dd_factor
+
+position_size = calculate_dd_adjusted_position(kelly_size * 100)
+
+// ============================================
+// TRADING LOGIC WITH FILTERS
+// ============================================
+
+// Filter 1: Base Prediction
+filter_prediction = ensemble_prediction > threshold_adaptive
+
+// Filter 2: Confidence
+min_confidence = trading_style == "Conservative" ? 0.40 : trading_style == "Balanced" ? 0.30 : 0.20
+filter_confidence = confidence > min_confidence
+
+// Filter 3: Strong Signal (if enabled)
+is_strong_signal = confidence > 0.6 and ensemble_prediction > 0.7
+filter_strong_signal = only_strong_signals ? is_strong_signal : true
+
+// Filter 4: Time Filter (if enabled)
+current_hour = hour(time)
+in_time_window = current_hour >= start_hour and current_hour <= end_hour
+filter_time = use_time_filter ? in_time_window : true
+
+// Filter 5: MTF Confirmation (if enabled)
+filter_mtf = use_mtf ? mtf_alignment > 0.6 : true
+
+// Filter 6: Position Size
+filter_position_size = position_size > 0
+
+// Filter 7: Regime Filter (optional - always pass for now)
+filter_regime = true
+
+// Filter 8: No Open Position
+filter_no_position = strategy.position_size == 0
+
+// Combined conditions
+long_signal = filter_prediction and filter_confidence and filter_strong_signal and filter_time and filter_mtf and filter_position_size and filter_regime and filter_no_position
+
+short_signal = false  // Disabled for now
+
+// ============================================
+// EXECUTE TRADES
+// ============================================
+
+if long_signal
+    strategy.entry("Long", strategy.long, qty=position_size)
+
+    if use_stops
+        stop_price = close * (1 - stop_loss_pct / 100)
+        take_price = close * (1 + take_profit_pct / 100)
+
+        if use_trailing
+            strategy.exit("Exit Long", "Long", stop=stop_price, limit=take_price, trail_offset=close * trailing_offset_pct / 100)
+        else
+            strategy.exit("Exit Long", "Long", stop=stop_price, limit=take_price)
+
+if short_signal
+    strategy.entry("Short", strategy.short, qty=position_size)
+
+    if use_stops
+        stop_price = close * (1 + stop_loss_pct / 100)
+        take_price = close * (1 - take_profit_pct / 100)
+
+        if use_trailing
+            strategy.exit("Exit Short", "Short", stop=stop_price, limit=take_price, trail_offset=close * trailing_offset_pct / 100)
+        else
+            strategy.exit("Exit Short", "Short", stop=stop_price, limit=take_price)
+
+// ============================================
+// VISUALIZATION
+// ============================================
+
+plot(ensemble_prediction, "Ensemble Prediction", color=color.new(color.blue, 0), linewidth=2)
+plot(threshold_adaptive, "Adaptive Threshold", color=color.new(color.orange, 0), linewidth=1, style=plot.style_line)
+
+bgcolor(long_signal ? color.new(color.green, 90) : na)
+bgcolor(short_signal ? color.new(color.red, 90) : na)
+
+plotshape(long_signal, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// ============================================
+// DEBUG TABLE - SHOWS FILTER STATUS
+// ============================================
+
+if show_debug_table
+    var table debug_table = table.new(position.middle_left, 2, 11, bgcolor=color.new(color.black, 75), border_width=2)
+
+    if barstate.islast
+        table.cell(debug_table, 0, 0, "FILTER CHECK", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debug_table, 1, 0, "STATUS", text_color=color.white, bgcolor=color.new(color.blue, 70))
+
+        // Row 1: Prediction
+        table.cell(debug_table, 0, 1, "Prediction > " + str.tostring(threshold_adaptive, "#.##"), text_color=color.white)
+        table.cell(debug_table, 1, 1, filter_prediction ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_prediction ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 2: Confidence
+        table.cell(debug_table, 0, 2, "Confidence > " + str.tostring(min_confidence, "#.##"), text_color=color.white)
+        table.cell(debug_table, 1, 2, filter_confidence ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_confidence ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 3: Strong Signal
+        table.cell(debug_table, 0, 3, "Strong Signal (" + (only_strong_signals ? "ON" : "OFF") + ")", text_color=color.white)
+        table.cell(debug_table, 1, 3, filter_strong_signal ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_strong_signal ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 4: Time Filter
+        table.cell(debug_table, 0, 4, "Time Filter (" + (use_time_filter ? "ON" : "OFF") + ")", text_color=color.white)
+        table.cell(debug_table, 1, 4, filter_time ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_time ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 5: MTF Confirmation
+        table.cell(debug_table, 0, 5, "MTF Confirm (" + (use_mtf ? "ON" : "OFF") + ")", text_color=color.white)
+        table.cell(debug_table, 1, 5, filter_mtf ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_mtf ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 6: Position Size
+        table.cell(debug_table, 0, 6, "Position Size > 0", text_color=color.white)
+        table.cell(debug_table, 1, 6, filter_position_size ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_position_size ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 7: Regime
+        table.cell(debug_table, 0, 7, "Regime: " + current_regime, text_color=color.white)
+        table.cell(debug_table, 1, 7, filter_regime ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_regime ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 8: No Position
+        table.cell(debug_table, 0, 8, "No Open Position", text_color=color.white)
+        table.cell(debug_table, 1, 8, filter_no_position ? "PASS" : "FAIL",
+                   text_color=color.white,
+                   bgcolor=filter_no_position ? color.new(color.green, 70) : color.new(color.red, 70))
+
+        // Row 9: Separator
+        table.cell(debug_table, 0, 9, "─────────────", text_color=color.gray)
+        table.cell(debug_table, 1, 9, "─────────────", text_color=color.gray)
+
+        // Row 10: Final Signal
+        table.cell(debug_table, 0, 10, "FINAL SIGNAL", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(debug_table, 1, 10, long_signal ? "LONG" : "NONE",
+                   text_color=color.white,
+                   bgcolor=long_signal ? color.new(color.green, 50) : color.new(color.gray, 70))
+
+// ============================================
+// STATISTICS TABLES
+// ============================================
+
+if show_stats_tables
+    // UNIFIED TABLE - Combines Models, Features, and Performance
+    var table unified_table = table.new(position.top_right, 3, 29, bgcolor=color.new(color.black, 85), border_width=2)
+
+    if barstate.islast
+        // ===== SECTION 1: MODELS =====
+        table.cell(unified_table, 0, 0, "MODEL", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(unified_table, 1, 0, "PREDICTION", text_color=color.white, bgcolor=color.new(color.blue, 70))
+        table.cell(unified_table, 2, 0, "WEIGHT", text_color=color.white, bgcolor=color.new(color.blue, 70))
+
+        table.cell(unified_table, 0, 1, "Decision Tree", text_color=color.white)
+        table.cell(unified_table, 1, 1, str.tostring(dt_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 1, str.tostring(dt_weight * 100, "#.#") + "%", text_color=color.orange)
+
+        table.cell(unified_table, 0, 2, "Linear Reg", text_color=color.white)
+        table.cell(unified_table, 1, 2, str.tostring(lr_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 2, str.tostring(lr_weight * 100, "#.#") + "%", text_color=color.orange)
+
+        table.cell(unified_table, 0, 3, "KNN", text_color=color.white)
+        table.cell(unified_table, 1, 3, str.tostring(knn_prediction, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 3, str.tostring(knn_weight * 100, "#.#") + "%", text_color=color.orange)
+
+        table.cell(unified_table, 0, 4, "─────────", text_color=color.gray)
+        table.cell(unified_table, 1, 4, "─────────", text_color=color.gray)
+        table.cell(unified_table, 2, 4, "─────────", text_color=color.gray)
+
+        table.cell(unified_table, 0, 5, "ENSEMBLE", text_color=color.white, bgcolor=color.new(color.purple, 70))
+        table.cell(unified_table, 1, 5, str.tostring(ensemble_prediction, "#.###"), text_color=color.lime, bgcolor=color.new(color.purple, 70))
+        table.cell(unified_table, 2, 5, str.tostring(confidence * 100, "#.#") + "%", text_color=color.aqua, bgcolor=color.new(color.purple, 70))
+
+        table.cell(unified_table, 0, 6, "─────────", text_color=color.gray)
+        table.cell(unified_table, 1, 6, "─────────", text_color=color.gray)
+        table.cell(unified_table, 2, 6, "─────────", text_color=color.gray)
+
+        table.cell(unified_table, 0, 7, "Regime", text_color=color.white)
+        table.cell(unified_table, 1, 7, current_regime, text_color=color.yellow)
+        table.cell(unified_table, 2, 7, str.tostring(regime_score, "#.##"), text_color=color.orange)
+
+        table.cell(unified_table, 0, 8, "Threshold", text_color=color.white)
+        table.cell(unified_table, 1, 8, str.tostring(threshold_adaptive, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 8, trading_style, text_color=color.orange)
+
+        table.cell(unified_table, 0, 9, "Position Size", text_color=color.white)
+        table.cell(unified_table, 1, 9, str.tostring(position_size, "#.#") + "%", text_color=color.yellow)
+        table.cell(unified_table, 2, 9, use_kelly ? "Kelly" : "Fixed", text_color=color.orange)
+
+        table.cell(unified_table, 0, 10, "Drawdown", text_color=color.white)
+        table.cell(unified_table, 1, 10, str.tostring(current_dd * 100, "#.#") + "%",
+                   text_color=current_dd > dd_stop_threshold ? color.red : color.green)
+        table.cell(unified_table, 2, 10, use_dd_protection ? "Protected" : "Off", text_color=color.orange)
+
+        // ===== SECTION 2: FEATURES =====
+        table.cell(unified_table, 0, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 1, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 2, 11, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+
+        table.cell(unified_table, 0, 12, "FEATURES", text_color=color.white, bgcolor=color.new(color.green, 70))
+        table.cell(unified_table, 1, 12, "VALUE", text_color=color.white, bgcolor=color.new(color.green, 70))
+        table.cell(unified_table, 2, 12, "", text_color=color.white, bgcolor=color.new(color.green, 70))
+
+        table.cell(unified_table, 0, 13, "F1: Momentum", text_color=color.white)
+        table.cell(unified_table, 1, 13, str.tostring(f_momentum_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 13, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 14, "F2: Volatility", text_color=color.white)
+        table.cell(unified_table, 1, 14, str.tostring(f_volatility_structure, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 14, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 15, "F3: Price Action", text_color=color.white)
+        table.cell(unified_table, 1, 15, str.tostring(f_price_action, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 15, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 16, "F4: Volume", text_color=color.white)
+        table.cell(unified_table, 1, 16, str.tostring(f_volume_profile, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 16, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 17, "F5: Mean Rev", text_color=color.white)
+        table.cell(unified_table, 1, 17, str.tostring(f_mean_reversion, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 17, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 18, "F6: Trend Qual", text_color=color.white)
+        table.cell(unified_table, 1, 18, str.tostring(f_trend_quality, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 18, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 19, "F7: MTF Align", text_color=color.white)
+        table.cell(unified_table, 1, 19, str.tostring(f_mtf_alignment, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 19, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 20, "F8: Regime", text_color=color.white)
+        table.cell(unified_table, 1, 20, str.tostring(f_market_regime, "#.###"), text_color=color.yellow)
+        table.cell(unified_table, 2, 20, "", text_color=color.white)
+
+        // ===== SECTION 3: PERFORMANCE =====
+        table.cell(unified_table, 0, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 1, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+        table.cell(unified_table, 2, 21, "══════════", text_color=color.white, bgcolor=color.new(color.blue, 50))
+
+        net_profit = strategy.netprofit
+        num_trades = strategy.closedtrades
+        percent_profitable = num_trades > 0 ? strategy.wintrades / num_trades * 100 : 0
+        profit_factor = strategy.grossloss != 0 ? math.abs(strategy.grossprofit / strategy.grossloss) : 0
+        avg_trade = num_trades > 0 ? net_profit / num_trades : 0
+        max_dd_pct = strategy.max_drawdown / strategy.initial_capital * 100
+        sharpe_approx = num_trades > 10 ? (avg_trade / ta.stdev(close, num_trades)) * math.sqrt(num_trades) : 0
+
+        table.cell(unified_table, 0, 22, "PERFORMANCE", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(unified_table, 1, 22, "VALUE", text_color=color.white, bgcolor=color.new(color.orange, 70))
+        table.cell(unified_table, 2, 22, "", text_color=color.white, bgcolor=color.new(color.orange, 70))
+
+        table.cell(unified_table, 0, 23, "Net Profit", text_color=color.white)
+        table.cell(unified_table, 1, 23, str.tostring(net_profit, "#.##"),
+                   text_color=net_profit > 0 ? color.lime : color.red)
+        table.cell(unified_table, 2, 23, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 24, "Total Trades", text_color=color.white)
+        table.cell(unified_table, 1, 24, str.tostring(num_trades), text_color=color.yellow)
+        table.cell(unified_table, 2, 24, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 25, "Win Rate", text_color=color.white)
+        table.cell(unified_table, 1, 25, str.tostring(percent_profitable, "#.#") + "%",
+                   text_color=percent_profitable > 50 ? color.lime : color.red)
+        table.cell(unified_table, 2, 25, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 26, "Profit Factor", text_color=color.white)
+        table.cell(unified_table, 1, 26, str.tostring(profit_factor, "#.##"),
+                   text_color=profit_factor > 1 ? color.lime : color.red)
+        table.cell(unified_table, 2, 26, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 27, "Avg Trade / Max DD", text_color=color.white)
+        table.cell(unified_table, 1, 27, str.tostring(avg_trade, "#.##") + " / " + str.tostring(max_dd_pct, "#.#") + "%",
+                   text_color=color.yellow)
+        table.cell(unified_table, 2, 27, "", text_color=color.white)
+
+        table.cell(unified_table, 0, 28, "Sharpe (est)", text_color=color.white)
+        table.cell(unified_table, 1, 28, str.tostring(sharpe_approx, "#.##"),
+                   text_color=sharpe_approx > 1 ? color.lime : sharpe_approx > 0 ? color.yellow : color.red)
+        table.cell(unified_table, 2, 28, "", text_color=color.white)
