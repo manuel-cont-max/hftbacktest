@@ -8,8 +8,8 @@ strategy("ML Ensemble PRO v4.1 - Optimized", overlay=true, initial_capital=10000
 // Trading Style: Changed default from "Conservative" to "Balanced"
 trading_style = input.string("Balanced", "Trading Style", options=["Aggressive", "Balanced", "Conservative"])
 
-// Threshold: Reduced from 0.60 to 0.55 for more signals
-threshold_base = input.float(0.55, "Base Signal Threshold", minval=0.1, maxval=0.9, step=0.01, tooltip="Lower = More trades. Balanced default: 0.55")
+// Threshold: Reduced from 0.60 to 0.52 for more signals
+threshold_base = input.float(0.52, "Base Signal Threshold", minval=0.40, maxval=0.70, step=0.01, tooltip="Lower = More trades. Balanced default: 0.52")
 
 // Strong Signals: Changed default from true to false
 only_strong_signals = input.bool(false, "Only Trade Strong Signals", tooltip="When enabled, requires both confidence>0.6 AND prediction>0.7. DISABLE for more trades")
@@ -31,7 +31,7 @@ end_hour = input.int(16, "End Hour", minval=0, maxval=23)
 // Position Sizing
 use_kelly = input.bool(true, "Use Kelly Criterion")
 kelly_fraction = input.float(0.25, "Kelly Fraction", minval=0.01, maxval=1.0, step=0.01)
-max_position_size = input.float(1.0, "Max Position Size (%)", minval=0.1, maxval=1.0, step=0.1)
+max_position_size = input.float(0.30, "Max Position Size (%)", minval=0.05, maxval=0.50, step=0.05, tooltip="SAFETY: Max 50% to protect capital")
 
 // Risk Management
 use_stops = input.bool(true, "Enable Stop Loss/Take Profit")
@@ -484,7 +484,7 @@ if strategy.closedtrades > total_trades
 
 win_rate = total_trades > 0 ? winning_trades / total_trades : 0.5
 
-kelly_size = 1.0
+kelly_size = 0.30  // Default sicuro al 30%
 if use_kelly and total_trades >= 10
     avg_win = winning_trades > 0 ? total_pnl / winning_trades : 0.0
     avg_loss = (total_trades - winning_trades) > 0 ? math.abs(total_pnl - (avg_win * winning_trades)) / (total_trades - winning_trades) : 0.0
@@ -492,9 +492,13 @@ if use_kelly and total_trades >= 10
     if avg_loss > 0
         win_loss_ratio = avg_win / avg_loss
         kelly_pct = (win_rate * win_loss_ratio - (1 - win_rate)) / win_loss_ratio
-        kelly_size := kelly_pct > 0 ? kelly_pct * kelly_fraction : 0.1
+        kelly_size := kelly_pct > 0 ? kelly_pct * kelly_fraction : 0.10
 
-    kelly_size := kelly_size > max_position_size ? max_position_size : kelly_size < 0.1 ? 0.1 : kelly_size
+    // PROTEZIONE: limita sempre tra 5% e max_position_size
+    kelly_size := kelly_size > max_position_size ? max_position_size : kelly_size < 0.05 ? 0.05 : kelly_size
+else
+    // Se Kelly non è attivo o non ci sono abbastanza trade, usa il 30%
+    kelly_size := 0.30
 
 calculate_dd_adjusted_position(base_pos) =>
     if not use_dd_protection or total_trades < min_trades_before_dd
