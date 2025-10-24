@@ -1,5 +1,5 @@
 //@version=5
-strategy("ML Ensemble PRO v4.2 - SAFE", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
+strategy("ML Ensemble PRO v4.3 - RESTART", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100, commission_type=strategy.commission.percent, commission_value=0.1, slippage=2)
 
 // ============================================
 // PARAMETERS - OPTIMIZED FOR MORE TRADES
@@ -18,8 +18,8 @@ only_strong_signals = input.bool(false, "Only Trade Strong Signals", tooltip="Wh
 use_mtf = input.bool(false, "Enable Multi-Timeframe Confirmation", tooltip="Requires Daily timeframe alignment. DISABLE for more trades")
 mtf_timeframe = input.timeframe("D", "Higher Timeframe")
 
-// Drawdown Protection: Keep enabled but with relaxed parameters
-use_dd_protection = input.bool(true, "Enable Drawdown Protection")
+// Drawdown Protection: DISABLED to allow fresh start
+use_dd_protection = input.bool(false, "Enable Drawdown Protection", tooltip="DISABLED to ignore historical losses. Enable after getting 20+ profitable trades")
 dd_stop_threshold = input.float(0.20, "Drawdown Stop Threshold", minval=0.05, maxval=0.50, step=0.01, tooltip="Stops trading when drawdown exceeds this %")
 min_trades_before_dd = input.int(10, "Min Trades Before DD Check", minval=5, maxval=50, tooltip="Wait for this many trades before checking drawdown")
 
