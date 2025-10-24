@@ -595,7 +595,7 @@ plotshape(short_signal, "Short Signal", shape.triangledown, location.abovebar, c
 // ============================================
 
 if show_debug_table
-    var table debug_table = table.new(position.top_left, 2, 11, bgcolor=color.new(color.black, 80), border_width=2)
+    var table debug_table = table.new(position.middle_left, 2, 11, bgcolor=color.new(color.black, 75), border_width=2)
 
     if barstate.islast
         table.cell(debug_table, 0, 0, "FILTER CHECK", text_color=color.white, bgcolor=color.new(color.blue, 70))
@@ -713,8 +713,8 @@ if show_stats_tables
                    text_color=current_dd > dd_stop_threshold ? color.red : color.green)
         table.cell(main_table, 2, 10, use_dd_protection ? "Protected" : "Off", text_color=color.orange)
 
-    // Table 2: MIDDLE-RIGHT - 8 Features
-    var table feat_table = table.new(position.middle_right, 2, 9, bgcolor=color.new(color.black, 85), border_width=1)
+    // Table 2: BOTTOM-LEFT - 8 Features
+    var table feat_table = table.new(position.bottom_left, 2, 9, bgcolor=color.new(color.black, 75), border_width=2)
 
     if barstate.islast
         table.cell(feat_table, 0, 0, "FEATURE", text_color=color.white, bgcolor=color.new(color.green, 70))
@@ -745,7 +745,7 @@ if show_stats_tables
         table.cell(feat_table, 1, 8, str.tostring(f_market_regime, "#.###"), text_color=color.yellow)
 
     // Table 3: BOTTOM-RIGHT - Performance
-    var table perf_table = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 85), border_width=1)
+    var table perf_table = table.new(position.bottom_right, 2, 8, bgcolor=color.new(color.black, 75), border_width=2)
 
     if barstate.islast
         net_profit = strategy.netprofit
