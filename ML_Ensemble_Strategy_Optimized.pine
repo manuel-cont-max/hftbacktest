@@ -322,36 +322,40 @@ knn_predict() =>
     array.clear(labels)
     array.clear(weights)
 
-    max_lookback = math.min(knn_samples, bar_index - 1)
-    start_offset = 1
-    end_offset = max_lookback
+    // Assicurati che non accediamo a dati troppo lontani
+    // bar_index deve essere abbastanza grande da permettere lookback + predict_ahead
+    safe_lookback = math.min(knn_samples, bar_index - predict_ahead - 1)
+    start_offset = predict_ahead + 1
+    end_offset = start_offset + safe_lookback - 1
 
-    if bar_index > predict_ahead
+    if bar_index > (predict_ahead * 2) and safe_lookback > 0
         for i = start_offset to end_offset
-            f1_past = f_momentum_quality[i]
-            f2_past = f_volatility_structure[i]
-            f3_past = f_price_action[i]
-            f4_past = f_volume_profile[i]
-            f5_past = f_mean_reversion[i]
-            f6_past = f_trend_quality[i]
-            f7_past = f_mtf_alignment[i]
-            f8_past = f_market_regime[i]
+            // Verifica che l'accesso sia sicuro
+            if i <= bar_index - 1 and (i - predict_ahead) >= 0
+                f1_past = f_momentum_quality[i]
+                f2_past = f_volatility_structure[i]
+                f3_past = f_price_action[i]
+                f4_past = f_volume_profile[i]
+                f5_past = f_mean_reversion[i]
+                f6_past = f_trend_quality[i]
+                f7_past = f_mtf_alignment[i]
+                f8_past = f_market_regime[i]
 
-            d1 = f_momentum_quality - f1_past
-            d2 = f_volatility_structure - f2_past
-            d3 = f_price_action - f3_past
-            d4 = f_volume_profile - f4_past
-            d5 = f_mean_reversion - f5_past
-            d6 = f_trend_quality - f6_past
-            d7 = f_mtf_alignment - f7_past
-            d8 = f_market_regime - f8_past
+                d1 = f_momentum_quality - f1_past
+                d2 = f_volatility_structure - f2_past
+                d3 = f_price_action - f3_past
+                d4 = f_volume_profile - f4_past
+                d5 = f_mean_reversion - f5_past
+                d6 = f_trend_quality - f6_past
+                d7 = f_mtf_alignment - f7_past
+                d8 = f_market_regime - f8_past
 
-            distance = math.sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4 + d5*d5 + d6*d6 + d7*d7 + d8*d8)
+                distance = math.sqrt(d1*d1 + d2*d2 + d3*d3 + d4*d4 + d5*d5 + d6*d6 + d7*d7 + d8*d8)
 
-            label = close[i - predict_ahead] > close[i] ? 1.0 : 0.0
+                label = close[i - predict_ahead] > close[i] ? 1.0 : 0.0
 
-            array.push(distances, distance)
-            array.push(labels, label)
+                array.push(distances, distance)
+                array.push(labels, label)
 
     if array.size(distances) >= k
         for i = 0 to k - 1
