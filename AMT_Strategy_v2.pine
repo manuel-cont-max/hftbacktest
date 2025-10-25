@@ -28,9 +28,9 @@ strategy("AMT Strategy v2.0 - Enhanced",
 // ===================
 
 // Session Settings
-session_time = input.session("0930-1600", "Trading Session", tooltip="Session for profile calculation (e.g., 0930-1600 for US stocks)")
-reset_on_session = input.bool(true, "Reset Profile Each Session", tooltip="Recalculate profile at start of each session")
-min_session_bars = input.int(10, "Min Bars for Valid Profile", minval=5, maxval=50, tooltip="Minimum bars in session before trading")
+session_time = input.session("0000-0000", "Trading Session", tooltip="Session for profile calculation (0000-0000 = 24h for crypto/forex, 0930-1600 for US stocks)")
+reset_on_session = input.bool(false, "Reset Profile Each Session", tooltip="Recalculate profile at start of each session")
+min_session_bars = input.int(5, "Min Bars for Valid Profile", minval=1, maxval=50, tooltip="Minimum bars in session before trading")
 
 // Volume Profile Settings
 base_lookback = input.int(20, "Base Lookback Period", minval=10, maxval=100, tooltip="Base number of bars for profile (adjusted by volatility)")
@@ -39,22 +39,22 @@ value_area_pct = input.float(70.0, "Value Area %", minval=60.0, maxval=80.0, ste
 profile_rows = input.int(24, "Profile Resolution", minval=12, maxval=48)
 
 // Initial Balance Settings
-use_initial_balance = input.bool(true, "Use Initial Balance", tooltip="Track first 2 bars of session as IB")
+use_initial_balance = input.bool(false, "Use Initial Balance", tooltip="Track first 2 bars of session as IB - DISABLE for 24/7 markets")
 ib_bars_count = input.int(2, "IB Bar Count", minval=1, maxval=5, tooltip="Number of bars for Initial Balance")
 ib_breakout_weight = input.float(1.5, "IB Breakout Weight", minval=1.0, maxval=3.0, step=0.1, tooltip="Signal multiplier for IB breakouts")
 
 // Volatility Adjustment Settings
 atr_period = input.int(14, "ATR Period", minval=5, maxval=50)
-use_atr_filters = input.bool(true, "Use ATR Filters", tooltip="Adjust acceptance/extension thresholds by ATR")
+use_atr_filters = input.bool(false, "Use ATR Filters", tooltip="Adjust acceptance/extension thresholds by ATR - Start FALSE for simplicity")
 atr_acceptance_mult = input.float(2.0, "ATR Acceptance Multiplier", minval=0.5, maxval=5.0, step=0.5)
 atr_extension_mult = input.float(1.5, "ATR Extension Multiplier", minval=0.5, maxval=3.0, step=0.5)
 
 // Multi-Timeframe Settings
-use_mtf = input.bool(true, "Multi-Timeframe Alignment", tooltip="Check Value Area on higher timeframe")
+use_mtf = input.bool(false, "Multi-Timeframe Alignment", tooltip="Check Value Area on higher timeframe - Start FALSE")
 mtf_timeframe = input.timeframe("240", "Higher Timeframe", tooltip="Higher timeframe for alignment (e.g., 240 for 4H)")
 
 // CPOC Settings
-use_cpoc = input.bool(true, "Track Composite POC", tooltip="Identify recurring POC levels")
+use_cpoc = input.bool(false, "Track Composite POC", tooltip="Identify recurring POC levels - Start FALSE")
 cpoc_lookback = input.int(10, "CPOC History Length", minval=5, maxval=20)
 cpoc_tolerance_pct = input.float(1.0, "CPOC Tolerance %", minval=0.1, maxval=2.0, step=0.1)
 
@@ -63,7 +63,8 @@ base_acceptance_bars = input.int(3, "Base Acceptance Bars", minval=2, maxval=10)
 volume_multiplier = input.float(1.2, "Volume Multiplier", minval=1.0, maxval=2.0, step=0.1)
 use_mean_reversion = input.bool(true, "Mean Reversion Trades")
 use_breakout = input.bool(true, "Breakout Trades")
-use_volume_filter = input.bool(true, "Volume Quality Filter", tooltip="Require minimum volume data quality")
+use_volume_filter = input.bool(false, "Volume Quality Filter", tooltip="Require minimum volume data quality - Start FALSE")
+use_profile_bias_filter = input.bool(false, "Use Profile Bias Filter", tooltip="Filter trades based on profile shape - Start FALSE")
 
 // Risk Management
 stop_loss_pct = input.float(2.0, "Stop Loss %", minval=0.5, maxval=5.0, step=0.5)
@@ -395,8 +396,8 @@ cpoc_bounce_long = at_cpoc and close > poc and close[1] <= poc
 cpoc_bounce_short = at_cpoc and close < poc and close[1] >= poc
 
 // Profile bias filter
-profile_allows_long = profile_bias >= 0  // Allow long if neutral or bullish profile
-profile_allows_short = profile_bias <= 0  // Allow short if neutral or bearish profile
+profile_allows_long = use_profile_bias_filter ? (profile_bias >= 0) : true  // Allow long if neutral or bullish profile (or filter disabled)
+profile_allows_short = use_profile_bias_filter ? (profile_bias <= 0) : true  // Allow short if neutral or bearish profile (or filter disabled)
 
 // Combined signals
 long_signal = enough_bars and reliable_volume and not na(vah) and not na(val) and not na(poc) and profile_allows_long and (long_breakout or long_mean_reversion or cpoc_bounce_long)
@@ -559,6 +560,69 @@ if barstate.islast
     if at_cpoc
         table.cell(info_table, 0, row, "⚠ AT CPOC", text_color=color.purple, text_size=size.small)
         table.cell(info_table, 1, row, "KEY LEVEL", text_color=color.purple, text_size=size.small)
+
+// ===================
+// DEBUG TABLE
+// ===================
+
+show_debug = input.bool(true, "Show Debug Table", tooltip="Show signal breakdown for debugging")
+
+var table debug_table = table.new(position.bottom_right, 2, 12, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast and show_debug
+    debug_row = 0
+
+    // Header
+    table.cell(debug_table, 0, debug_row, "SIGNAL DEBUG", text_color=color.white, bgcolor=color.new(color.orange, 70), text_size=size.small)
+    table.cell(debug_table, 1, debug_row, "STATUS", text_color=color.white, bgcolor=color.new(color.orange, 70), text_size=size.small)
+    debug_row := debug_row + 1
+
+    // Check each condition
+    table.cell(debug_table, 0, debug_row, "Enough Bars", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, enough_bars ? "✓ YES" : "✗ NO", text_color=enough_bars ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Reliable Volume", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, reliable_volume ? "✓ YES" : "✗ NO", text_color=reliable_volume ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Valid AMT Levels", text_color=color.white, text_size=size.small)
+    levels_valid = not na(vah) and not na(val) and not na(poc)
+    table.cell(debug_table, 1, debug_row, levels_valid ? "✓ YES" : "✗ NO", text_color=levels_valid ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Long Breakout", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, long_breakout ? "✓ YES" : "✗ NO", text_color=long_breakout ? color.green : color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Long Mean Rev", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, long_mean_reversion ? "✓ YES" : "✗ NO", text_color=long_mean_reversion ? color.green : color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Short Breakout", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, short_breakout ? "✓ YES" : "✗ NO", text_color=short_breakout ? color.green : color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Short Mean Rev", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, short_mean_reversion ? "✓ YES" : "✗ NO", text_color=short_mean_reversion ? color.green : color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "────────", text_color=color.gray, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, "────────", text_color=color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Bars Above VAH", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, str.tostring(bars_above_vah), text_color=color.white, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Bars Below VAL", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, str.tostring(bars_below_val), text_color=color.white, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "📊 FINAL SIGNAL", text_color=color.yellow, text_size=size.small)
+    final_status = long_signal ? "LONG" : short_signal ? "SHORT" : "NONE"
+    final_color = long_signal ? color.green : short_signal ? color.red : color.gray
+    table.cell(debug_table, 1, debug_row, final_status, text_color=final_color, text_size=size.small)
 
 // ===================
 // ALERTS
