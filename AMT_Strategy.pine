@@ -24,28 +24,20 @@ strategy("Auction Market Theory Strategy v1.0",
 // ===================
 
 // Volume Profile Settings
-lookback_period = input.int(20, "Profile Lookback Period (Bars)", minval=10, maxval=100,
-    tooltip="Number of bars to calculate volume profile")
-value_area_pct = input.float(70.0, "Value Area Percentage", minval=60.0, maxval=80.0, step=1.0,
-    tooltip="Percentage of volume contained in Value Area (typically 70%)")
-profile_rows = input.int(24, "Profile Resolution (Rows)", minval=12, maxval=48,
-    tooltip="Number of price levels in volume profile")
+lookback_period = input.int(20, "Profile Lookback Period (Bars)", minval=10, maxval=100, tooltip="Number of bars to calculate volume profile")
+value_area_pct = input.float(70.0, "Value Area Percentage", minval=60.0, maxval=80.0, step=1.0, tooltip="Percentage of volume contained in Value Area (typically 70%)")
+profile_rows = input.int(24, "Profile Resolution (Rows)", minval=12, maxval=48, tooltip="Number of price levels in volume profile")
 
 // Entry Settings
-acceptance_bars = input.int(3, "Acceptance Bars", minval=2, maxval=10,
-    tooltip="Bars needed above/below level for acceptance")
-volume_multiplier = input.float(1.2, "Volume Confirmation", minval=1.0, maxval=2.0, step=0.1,
-    tooltip="Volume must be X times average for breakout confirmation")
-use_mean_reversion = input.bool(true, "Enable Mean Reversion Trades",
-    tooltip="Trade returns to POC from extremes")
-use_breakout = input.bool(true, "Enable Breakout Trades",
-    tooltip="Trade acceptance above VAH / below VAL")
+acceptance_bars = input.int(3, "Acceptance Bars", minval=2, maxval=10, tooltip="Bars needed above/below level for acceptance")
+volume_multiplier = input.float(1.2, "Volume Confirmation", minval=1.0, maxval=2.0, step=0.1, tooltip="Volume must be X times average for breakout confirmation")
+use_mean_reversion = input.bool(true, "Enable Mean Reversion Trades", tooltip="Trade returns to POC from extremes")
+use_breakout = input.bool(true, "Enable Breakout Trades", tooltip="Trade acceptance above VAH / below VAL")
 
 // Risk Management
 stop_loss_pct = input.float(2.0, "Stop Loss (%)", minval=0.5, maxval=5.0, step=0.5)
 take_profit_pct = input.float(4.0, "Take Profit (%)", minval=1.0, maxval=10.0, step=0.5)
-use_poc_exit = input.bool(true, "Exit at POC",
-    tooltip="Close mean reversion trades when POC is reached")
+use_poc_exit = input.bool(true, "Exit at POC", tooltip="Close mean reversion trades when POC is reached")
 
 // ===================
 // VOLUME PROFILE CALCULATION
