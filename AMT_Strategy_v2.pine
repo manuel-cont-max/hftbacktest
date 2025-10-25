@@ -1,0 +1,572 @@
+//@version=5
+strategy("AMT Strategy v2.0 - Enhanced",
+         shorttitle="AMT v2",
+         overlay=true,
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=10,
+         commission_type=strategy.commission.percent,
+         commission_value=0.1,
+         slippage=2)
+
+// ============================================================================
+// ENHANCED AUCTION MARKET THEORY STRATEGY v2.0
+// ============================================================================
+// Improvements:
+// - Session-based profile calculation
+// - Volatility-adjusted parameters (ATR-based)
+// - Multi-timeframe Value Area alignment
+// - Composite POC (CPOC) tracking
+// - Initial Balance (IB) detection
+// - Profile shape recognition
+// - Volume quality filters
+// - Adaptive lookback period
+// ============================================================================
+
+// ===================
+// INPUTS
+// ===================
+
+// Session Settings
+session_time = input.session("0930-1600", "Trading Session", tooltip="Session for profile calculation (e.g., 0930-1600 for US stocks)")
+reset_on_session = input.bool(true, "Reset Profile Each Session", tooltip="Recalculate profile at start of each session")
+min_session_bars = input.int(10, "Min Bars for Valid Profile", minval=5, maxval=50, tooltip="Minimum bars in session before trading")
+
+// Volume Profile Settings
+base_lookback = input.int(20, "Base Lookback Period", minval=10, maxval=100, tooltip="Base number of bars for profile (adjusted by volatility)")
+use_adaptive_lookback = input.bool(true, "Adaptive Lookback", tooltip="Adjust lookback based on volatility")
+value_area_pct = input.float(70.0, "Value Area %", minval=60.0, maxval=80.0, step=1.0)
+profile_rows = input.int(24, "Profile Resolution", minval=12, maxval=48)
+
+// Initial Balance Settings
+use_initial_balance = input.bool(true, "Use Initial Balance", tooltip="Track first 2 bars of session as IB")
+ib_bars_count = input.int(2, "IB Bar Count", minval=1, maxval=5, tooltip="Number of bars for Initial Balance")
+ib_breakout_weight = input.float(1.5, "IB Breakout Weight", minval=1.0, maxval=3.0, step=0.1, tooltip="Signal multiplier for IB breakouts")
+
+// Volatility Adjustment Settings
+atr_period = input.int(14, "ATR Period", minval=5, maxval=50)
+use_atr_filters = input.bool(true, "Use ATR Filters", tooltip="Adjust acceptance/extension thresholds by ATR")
+atr_acceptance_mult = input.float(2.0, "ATR Acceptance Multiplier", minval=0.5, maxval=5.0, step=0.5)
+atr_extension_mult = input.float(1.5, "ATR Extension Multiplier", minval=0.5, maxval=3.0, step=0.5)
+
+// Multi-Timeframe Settings
+use_mtf = input.bool(true, "Multi-Timeframe Alignment", tooltip="Check Value Area on higher timeframe")
+mtf_timeframe = input.timeframe("240", "Higher Timeframe", tooltip="Higher timeframe for alignment (e.g., 240 for 4H)")
+
+// CPOC Settings
+use_cpoc = input.bool(true, "Track Composite POC", tooltip="Identify recurring POC levels")
+cpoc_lookback = input.int(10, "CPOC History Length", minval=5, maxval=20)
+cpoc_tolerance_pct = input.float(1.0, "CPOC Tolerance %", minval=0.1, maxval=2.0, step=0.1)
+
+// Entry Settings
+base_acceptance_bars = input.int(3, "Base Acceptance Bars", minval=2, maxval=10)
+volume_multiplier = input.float(1.2, "Volume Multiplier", minval=1.0, maxval=2.0, step=0.1)
+use_mean_reversion = input.bool(true, "Mean Reversion Trades")
+use_breakout = input.bool(true, "Breakout Trades")
+use_volume_filter = input.bool(true, "Volume Quality Filter", tooltip="Require minimum volume data quality")
+
+// Risk Management
+stop_loss_pct = input.float(2.0, "Stop Loss %", minval=0.5, maxval=5.0, step=0.5)
+take_profit_pct = input.float(4.0, "Take Profit %", minval=1.0, maxval=10.0, step=0.5)
+use_poc_exit = input.bool(true, "Exit Mean Rev at POC")
+use_atr_stops = input.bool(true, "ATR-Based Stops", tooltip="Use ATR instead of fixed % for stops")
+atr_stop_mult = input.float(2.0, "ATR Stop Multiplier", minval=1.0, maxval=5.0, step=0.5)
+
+// ===================
+// VOLATILITY CALCULATION
+// ===================
+
+atr = ta.atr(atr_period)
+avg_atr = ta.sma(atr, 50)
+volatility_ratio = avg_atr > 0 ? atr / avg_atr : 1.0
+
+// Adaptive lookback based on volatility
+lookback_period = use_adaptive_lookback ?
+                  int(base_lookback * (volatility_ratio > 1.5 ? 0.7 : volatility_ratio < 0.7 ? 1.3 : 1.0)) :
+                  base_lookback
+
+// ATR-based thresholds
+atr_pct = close > 0 ? (atr / close) * 100 : 3.0
+acceptance_threshold = use_atr_filters ? atr * atr_acceptance_mult : atr
+extension_threshold_pct = use_atr_filters ? atr_pct * atr_extension_mult : 3.0
+
+// ===================
+// SESSION DETECTION
+// ===================
+
+in_session = not na(time(timeframe.period, session_time))
+var bool new_session = false
+var int session_bar_count = 0
+
+// Detect session start
+if reset_on_session
+    new_session := ta.change(time(timeframe.period, session_time)) and in_session
+    if new_session
+        session_bar_count := 0
+    else if in_session
+        session_bar_count := session_bar_count + 1
+else
+    session_bar_count := bar_index
+
+// ===================
+// INITIAL BALANCE TRACKING
+// ===================
+
+var float ib_high = na
+var float ib_low = na
+var int ib_bars_counted = 0
+var bool ib_complete = false
+
+if new_session and use_initial_balance
+    ib_high := high
+    ib_low := low
+    ib_bars_counted := 1
+    ib_complete := false
+else if use_initial_balance and not ib_complete and ib_bars_counted < ib_bars_count
+    ib_high := math.max(nz(ib_high, high), high)
+    ib_low := math.min(nz(ib_low, low), low)
+    ib_bars_counted := ib_bars_counted + 1
+    if ib_bars_counted >= ib_bars_count
+        ib_complete := true
+
+// IB breakout detection
+ib_breakout_up = use_initial_balance and ib_complete and not na(ib_high) and close > ib_high
+ib_breakout_down = use_initial_balance and ib_complete and not na(ib_low) and close < ib_low
+
+// ===================
+// VOLUME PROFILE CALCULATION
+// ===================
+
+calc_profile(lookback) =>
+    var float[] price_levels = array.new_float(profile_rows)
+    var float[] volume_levels = array.new_float(profile_rows)
+
+    highest_price = ta.highest(high, lookback)
+    lowest_price = ta.lowest(low, lookback)
+    price_range = highest_price - lowest_price
+
+    if price_range <= 0
+        price_range := 1.0
+
+    row_size = price_range / profile_rows
+
+    // Initialize
+    for i = 0 to profile_rows - 1
+        array.set(price_levels, i, lowest_price + (i * row_size))
+        array.set(volume_levels, i, 0.0)
+
+    // Accumulate volume
+    for i = 0 to math.min(lookback - 1, bar_index - 1)
+        bar_high = high[i]
+        bar_low = low[i]
+        bar_volume = volume[i]
+        bar_range = bar_high - bar_low
+
+        if bar_range > 0
+            for j = 0 to profile_rows - 1
+                level_price = array.get(price_levels, j)
+                level_top = level_price + row_size
+
+                if bar_high >= level_price and bar_low <= level_top
+                    overlap_low = math.max(bar_low, level_price)
+                    overlap_high = math.min(bar_high, level_top)
+                    overlap = overlap_high - overlap_low
+                    volume_contribution = bar_volume * (overlap / bar_range)
+
+                    current_vol = array.get(volume_levels, j)
+                    array.set(volume_levels, j, current_vol + volume_contribution)
+        else
+            closest_idx = math.round((bar_low - lowest_price) / row_size)
+            closest_idx := math.max(0, math.min(profile_rows - 1, closest_idx))
+            current_vol = array.get(volume_levels, closest_idx)
+            array.set(volume_levels, closest_idx, current_vol + bar_volume)
+
+    [price_levels, volume_levels]
+
+find_poc(volume_levels, price_levels) =>
+    max_volume = 0.0
+    poc_idx = 0
+
+    for i = 0 to array.size(volume_levels) - 1
+        vol = array.get(volume_levels, i)
+        if vol > max_volume
+            max_volume := vol
+            poc_idx := i
+
+    [array.get(price_levels, poc_idx), poc_idx]
+
+find_value_area(volume_levels, price_levels, poc_idx, value_pct) =>
+    total_volume = 0.0
+    for i = 0 to array.size(volume_levels) - 1
+        total_volume := total_volume + array.get(volume_levels, i)
+
+    target_volume = total_volume * (value_pct / 100.0)
+
+    va_volume = array.get(volume_levels, poc_idx)
+    va_high_idx = poc_idx
+    va_low_idx = poc_idx
+
+    while va_volume < target_volume and (va_high_idx < array.size(volume_levels) - 1 or va_low_idx > 0)
+        vol_above = va_high_idx < array.size(volume_levels) - 1 ? array.get(volume_levels, va_high_idx + 1) : 0.0
+        vol_below = va_low_idx > 0 ? array.get(volume_levels, va_low_idx - 1) : 0.0
+
+        if vol_above > vol_below and va_high_idx < array.size(volume_levels) - 1
+            va_high_idx := va_high_idx + 1
+            va_volume := va_volume + vol_above
+        else if va_low_idx > 0
+            va_low_idx := va_low_idx - 1
+            va_volume := va_volume + vol_below
+        else if va_high_idx < array.size(volume_levels) - 1
+            va_high_idx := va_high_idx + 1
+            va_volume := va_volume + vol_above
+        else
+            break
+
+    [array.get(price_levels, va_high_idx), array.get(price_levels, va_low_idx)]
+
+// ===================
+// PROFILE SHAPE RECOGNITION
+// ===================
+
+get_profile_shape(poc, vah, val) =>
+    va_range = vah - val
+    poc_position = va_range > 0 ? (poc - val) / va_range : 0.5
+
+    shape = poc_position > 0.7 ? "P" : poc_position < 0.3 ? "b" : "D"
+    bias = poc_position > 0.7 ? 1 : poc_position < 0.3 ? -1 : 0  // 1=bullish, -1=bearish, 0=neutral
+
+    [shape, bias]
+
+// ===================
+// COMPOSITE POC TRACKING
+// ===================
+
+var array<float> cpoc_history = array.new_float(0)
+
+is_near_cpoc(price, tolerance_pct) =>
+    if array.size(cpoc_history) == 0
+        false
+    else
+        near_cpoc = false
+        for i = 0 to array.size(cpoc_history) - 1
+            historical_poc = array.get(cpoc_history, i)
+            if not na(historical_poc) and math.abs(price - historical_poc) / price * 100 < tolerance_pct
+                near_cpoc := true
+                break
+        near_cpoc
+
+// ===================
+// CALCULATE AMT LEVELS
+// ===================
+
+var float vah = na
+var float val = na
+var float poc = na
+var string profile_shape = "D"
+var int profile_bias = 0
+
+enough_bars = bar_index >= lookback_period and session_bar_count >= min_session_bars
+
+if enough_bars
+    [price_levels, volume_levels] = calc_profile(lookback_period)
+    [poc_calc, poc_idx] = find_poc(volume_levels, price_levels)
+    [vah_calc, val_calc] = find_value_area(volume_levels, price_levels, poc_idx, value_area_pct)
+
+    vah := vah_calc
+    val := val_calc
+    poc := poc_calc
+
+    // Profile shape
+    [shape, bias] = get_profile_shape(poc, vah, val)
+    profile_shape := shape
+    profile_bias := bias
+
+    // Update CPOC history
+    if use_cpoc and new_session
+        if array.size(cpoc_history) >= cpoc_lookback
+            array.shift(cpoc_history)
+        array.push(cpoc_history, poc)
+else
+    vah := high
+    val := low
+    poc := close
+
+// CPOC zone detection
+at_cpoc = use_cpoc and is_near_cpoc(close, cpoc_tolerance_pct)
+
+// ===================
+// MULTI-TIMEFRAME ALIGNMENT
+// ===================
+
+[vah_mtf, val_mtf, poc_mtf] = request.security(syminfo.tickerid, mtf_timeframe, [vah, val, poc], lookahead=barmerge.lookahead_off)
+
+mtf_bullish = use_mtf ? (close > val_mtf) : true
+mtf_bearish = use_mtf ? (close < vah_mtf) : true
+mtf_aligned_bull = use_mtf ? (close > vah and close > vah_mtf) : (close > vah)
+mtf_aligned_bear = use_mtf ? (close < val and close < val_mtf) : (close < val)
+
+// ===================
+// VOLUME QUALITY FILTER
+// ===================
+
+vol_ma = ta.sma(volume, 50)
+vol_std = ta.stdev(volume, 50)
+min_volume_threshold = vol_ma * 0.1
+
+reliable_volume = use_volume_filter ? (vol_std > 0 and volume > min_volume_threshold and vol_ma > 0) : true
+high_volume = volume > vol_ma * volume_multiplier
+
+// ===================
+// MARKET CONTEXT
+// ===================
+
+price_in_value = not na(val) and not na(vah) and close >= val and close <= vah
+price_above_value = not na(vah) and close > vah
+price_below_value = not na(val) and close < val
+
+dist_from_poc = not na(poc) and poc > 0 ? math.abs(close - poc) / poc * 100 : 0
+
+// Market type
+bars_in_value = 0
+bars_above_value = 0
+bars_below_value = 0
+
+if bar_index > 0 and not na(val) and not na(vah)
+    for i = 0 to math.min(lookback_period - 1, bar_index - 1)
+        if close[i] >= val and close[i] <= vah
+            bars_in_value := bars_in_value + 1
+        else if close[i] > vah
+            bars_above_value := bars_above_value + 1
+        else
+            bars_below_value := bars_below_value + 1
+
+total_bars = bars_in_value + bars_above_value + bars_below_value
+rotation_pct = total_bars > 0 ? (bars_in_value / total_bars) * 100 : 0
+
+market_type = rotation_pct > 60 ? "ROTATING" : bars_above_value > bars_below_value ? "TRENDING UP" : "TRENDING DOWN"
+
+// ===================
+// ACCEPTANCE/REJECTION
+// ===================
+
+var int bars_above_vah = 0
+var int bars_below_val = 0
+
+if not na(vah) and not na(val)
+    if close > vah
+        bars_above_vah := bars_above_vah + 1
+        bars_below_val := 0
+    else if close < val
+        bars_below_val := bars_below_val + 1
+        bars_above_vah := 0
+    else
+        bars_above_vah := 0
+        bars_below_val := 0
+
+// Dynamic acceptance based on ATR
+dynamic_acceptance_bars = use_atr_filters ? math.max(2, int(base_acceptance_bars * (1.0 / volatility_ratio))) : base_acceptance_bars
+
+acceptance_above_vah = bars_above_vah >= dynamic_acceptance_bars
+acceptance_below_val = bars_below_val >= dynamic_acceptance_bars
+
+// ===================
+// ENTRY SIGNALS
+// ===================
+
+// Mean reversion
+approaching_poc_from_below = bar_index > 0 and not na(poc) and not na(val) and close < poc and close > val and close[1] < close
+approaching_poc_from_above = bar_index > 0 and not na(poc) and not na(vah) and close > poc and close < vah and close[1] > close
+extended_from_poc = dist_from_poc > extension_threshold_pct
+
+// Breakout signals
+long_breakout = use_breakout and acceptance_above_vah and high_volume and mtf_aligned_bull and market_type != "TRENDING DOWN"
+short_breakout = use_breakout and acceptance_below_val and high_volume and mtf_aligned_bear and market_type != "TRENDING UP"
+
+// Mean reversion signals
+long_mean_reversion = use_mean_reversion and price_below_value and approaching_poc_from_below and extended_from_poc and mtf_bullish
+short_mean_reversion = use_mean_reversion and price_above_value and approaching_poc_from_above and extended_from_poc and mtf_bearish
+
+// IB breakout enhancement
+ib_enhanced_long = ib_breakout_up and long_breakout
+ib_enhanced_short = ib_breakout_down and short_breakout
+
+// CPOC enhancement (strong support/resistance)
+cpoc_bounce_long = at_cpoc and close > poc and close[1] <= poc
+cpoc_bounce_short = at_cpoc and close < poc and close[1] >= poc
+
+// Profile bias filter
+profile_allows_long = profile_bias >= 0  // Allow long if neutral or bullish profile
+profile_allows_short = profile_bias <= 0  // Allow short if neutral or bearish profile
+
+// Combined signals
+long_signal = enough_bars and reliable_volume and not na(vah) and not na(val) and not na(poc) and profile_allows_long and (long_breakout or long_mean_reversion or cpoc_bounce_long)
+short_signal = enough_bars and reliable_volume and not na(vah) and not na(val) and not na(poc) and profile_allows_short and (short_breakout or short_mean_reversion or cpoc_bounce_short)
+
+// Signal strength (for position sizing or filtering)
+signal_strength_long = (long_breakout ? 1.0 : 0.0) + (ib_enhanced_long ? ib_breakout_weight : 0.0) + (cpoc_bounce_long ? 0.5 : 0.0)
+signal_strength_short = (short_breakout ? 1.0 : 0.0) + (ib_enhanced_short ? ib_breakout_weight : 0.0) + (cpoc_bounce_short ? 0.5 : 0.0)
+
+// Entry type tracking
+var string entry_type = ""
+
+if long_signal
+    entry_type := long_breakout ? "BREAKOUT" : cpoc_bounce_long ? "CPOC" : "MEAN_REV"
+if short_signal
+    entry_type := short_breakout ? "BREAKOUT" : cpoc_bounce_short ? "CPOC" : "MEAN_REV"
+
+// ===================
+// POSITION MANAGEMENT
+// ===================
+
+// ATR-based or fixed stops
+long_stop = use_atr_stops ? close - (atr * atr_stop_mult) : close * (1 - stop_loss_pct / 100)
+long_target = close * (1 + take_profit_pct / 100)
+short_stop = use_atr_stops ? close + (atr * atr_stop_mult) : close * (1 + stop_loss_pct / 100)
+short_target = close * (1 - take_profit_pct / 100)
+
+// Exit conditions
+at_poc = not na(poc) and poc > 0 and math.abs(close - poc) / poc < 0.005
+poc_exit_condition = use_poc_exit and at_poc and entry_type == "MEAN_REV"
+
+// Exit if IB is violated (for IB breakout trades)
+ib_violation_long = ib_enhanced_long and not na(ib_low) and close < ib_low
+ib_violation_short = ib_enhanced_short and not na(ib_high) and close > ib_high
+
+// ===================
+// EXECUTE TRADES
+// ===================
+
+if long_signal and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+if short_signal and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+
+// Exits
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long", stop=long_stop, limit=long_target)
+    if poc_exit_condition
+        strategy.close("Long", comment="POC")
+    if ib_violation_long
+        strategy.close("Long", comment="IB Violation")
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short", stop=short_stop, limit=short_target)
+    if poc_exit_condition
+        strategy.close("Short", comment="POC")
+    if ib_violation_short
+        strategy.close("Short", comment="IB Violation")
+
+// ===================
+// VISUALIZATION
+// ===================
+
+// Plot AMT levels
+plot(vah, "VAH", color=color.new(color.red, 0), linewidth=2)
+plot(poc, "POC", color=color.new(color.yellow, 0), linewidth=3)
+plot(val, "VAL", color=color.new(color.green, 0), linewidth=2)
+
+// Plot IB levels
+plot(use_initial_balance and ib_complete ? ib_high : na, "IB High", color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
+plot(use_initial_balance and ib_complete ? ib_low : na, "IB Low", color=color.new(color.orange, 50), linewidth=1, style=plot.style_linebr)
+
+// Fill Value Area
+vah_plot = plot(vah, color=na)
+val_plot = plot(val, color=na)
+fill(vah_plot, val_plot, color=color.new(color.blue, 90))
+
+// CPOC markers
+plotshape(at_cpoc, "CPOC", shape.diamond, location.belowbar, color.new(color.purple, 0), size=size.tiny)
+
+// Background
+bgcolor(price_above_value ? color.new(color.green, 95) : price_below_value ? color.new(color.red, 95) : color.new(color.blue, 97))
+
+// ===================
+// INFO TABLE
+// ===================
+
+var table info_table = table.new(position.top_right, 2, 15, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    row = 0
+
+    // Header
+    table.cell(info_table, 0, row, "AMT v2.0", text_color=color.white, bgcolor=color.new(color.blue, 70), text_size=size.small)
+    table.cell(info_table, 1, row, "VALUE", text_color=color.white, bgcolor=color.new(color.blue, 70), text_size=size.small)
+    row := row + 1
+
+    // AMT Levels
+    table.cell(info_table, 0, row, "VAH", text_color=color.red, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(vah, format.mintick), text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "POC", text_color=color.yellow, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(poc, format.mintick), text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "VAL", text_color=color.green, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(val, format.mintick), text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    // IB Levels
+    if use_initial_balance and ib_complete
+        table.cell(info_table, 0, row, "IB High", text_color=color.orange, text_size=size.small)
+        table.cell(info_table, 1, row, str.tostring(ib_high, format.mintick), text_color=color.white, text_size=size.small)
+        row := row + 1
+
+        table.cell(info_table, 0, row, "IB Low", text_color=color.orange, text_size=size.small)
+        table.cell(info_table, 1, row, str.tostring(ib_low, format.mintick), text_color=color.white, text_size=size.small)
+        row := row + 1
+
+    // Separator
+    table.cell(info_table, 0, row, "────────", text_color=color.gray, text_size=size.small)
+    table.cell(info_table, 1, row, "────────", text_color=color.gray, text_size=size.small)
+    row := row + 1
+
+    // Market Context
+    table.cell(info_table, 0, row, "Market Type", text_color=color.white, text_size=size.small)
+    market_color = market_type == "ROTATING" ? color.blue : market_type == "TRENDING UP" ? color.green : color.red
+    table.cell(info_table, 1, row, market_type, text_color=market_color, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "Profile Shape", text_color=color.white, text_size=size.small)
+    shape_color = profile_shape == "P" ? color.green : profile_shape == "b" ? color.red : color.gray
+    table.cell(info_table, 1, row, profile_shape + "-shaped", text_color=shape_color, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "Price Position", text_color=color.white, text_size=size.small)
+    position_text = price_above_value ? "Above VA" : price_below_value ? "Below VA" : "In VA"
+    position_color = price_above_value ? color.green : price_below_value ? color.red : color.blue
+    table.cell(info_table, 1, row, position_text, text_color=position_color, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "Dist from POC", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(dist_from_poc, "#.##") + "%", text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "ATR", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(atr, format.mintick), text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "Vol Ratio", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(volatility_ratio, "#.##") + "x", text_color=volatility_ratio > 1.5 ? color.red : color.white, text_size=size.small)
+    row := row + 1
+
+    table.cell(info_table, 0, row, "Lookback", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, row, str.tostring(lookback_period), text_color=color.white, text_size=size.small)
+    row := row + 1
+
+    if at_cpoc
+        table.cell(info_table, 0, row, "⚠ AT CPOC", text_color=color.purple, text_size=size.small)
+        table.cell(info_table, 1, row, "KEY LEVEL", text_color=color.purple, text_size=size.small)
+
+// ===================
+// ALERTS
+// ===================
+
+alertcondition(long_signal, "AMT Long", "AMT v2: Long {{ticker}} @ {{close}}")
+alertcondition(short_signal, "AMT Short", "AMT v2: Short {{ticker}} @ {{close}}")
+alertcondition(at_poc, "At POC", "AMT v2: At POC {{ticker}} @ {{close}}")
+alertcondition(at_cpoc, "At CPOC", "AMT v2: At CPOC {{ticker}} @ {{close}}")
+alertcondition(ib_breakout_up, "IB Breakout Up", "AMT v2: IB Breakout Up {{ticker}} @ {{close}}")
+alertcondition(ib_breakout_down, "IB Breakout Down", "AMT v2: IB Breakout Down {{ticker}} @ {{close}}")
