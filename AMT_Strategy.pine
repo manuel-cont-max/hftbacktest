@@ -182,8 +182,7 @@ for i = 0 to math.min(lookback_period - 1, bar_index - 1)
 total_bars = bars_in_value + bars_above_value + bars_below_value
 rotation_pct = total_bars > 0 ? (bars_in_value / total_bars) * 100 : 0
 
-market_type = rotation_pct > 60 ? "ROTATING" :
-              bars_above_value > bars_below_value ? "TRENDING UP" : "TRENDING DOWN"
+market_type = rotation_pct > 60 ? "ROTATING" : bars_above_value > bars_below_value ? "TRENDING UP" : "TRENDING DOWN"
 
 // Volume confirmation
 vol_ma = ta.sma(volume, 20)
@@ -291,9 +290,7 @@ val_plot = plot(val, color=na)
 fill(vah_plot, val_plot, color=color.new(color.blue, 90), title="Value Area")
 
 // Background color based on market type
-bgcolor(price_above_value ? color.new(color.green, 95) :
-        price_below_value ? color.new(color.red, 95) :
-        color.new(color.blue, 97))
+bgcolor(price_above_value ? color.new(color.green, 95) : price_below_value ? color.new(color.red, 95) : color.new(color.blue, 97))
 
 // ===================
 // INFO TABLE
@@ -321,8 +318,7 @@ if barstate.islast
     table.cell(info_table, 1, 4, "────────", text_color=color.gray, text_size=size.small)
 
     table.cell(info_table, 0, 5, "Market Type", text_color=color.white, text_size=size.small)
-    market_color = market_type == "ROTATING" ? color.blue :
-                   market_type == "TRENDING UP" ? color.green : color.red
+    market_color = market_type == "ROTATING" ? color.blue : market_type == "TRENDING UP" ? color.green : color.red
     table.cell(info_table, 1, 5, market_type, text_color=market_color, text_size=size.small)
 
     table.cell(info_table, 0, 6, "Price Position", text_color=color.white, text_size=size.small)
