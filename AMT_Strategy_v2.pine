@@ -569,7 +569,7 @@ if barstate.islast
 
 show_debug = input.bool(true, "Show Debug Table", tooltip="Show signal breakdown for debugging")
 
-var table debug_table = table.new(position.bottom_left, 2, 12, bgcolor=color.new(color.black, 85), border_width=1)
+var table debug_table = table.new(position.bottom_left, 2, 18, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast and show_debug
     debug_row = 0
@@ -613,12 +613,46 @@ if barstate.islast and show_debug
     table.cell(debug_table, 1, debug_row, "────────", text_color=color.gray, text_size=size.small)
     debug_row := debug_row + 1
 
+    // Detailed breakout conditions
+    table.cell(debug_table, 0, debug_row, "Acceptance Long", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, acceptance_above_vah ? "✓ YES" : "✗ NO", text_color=acceptance_above_vah ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Acceptance Short", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, acceptance_below_val ? "✓ YES" : "✗ NO", text_color=acceptance_below_val ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "High Volume", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, high_volume ? "✓ YES" : "✗ NO", text_color=high_volume ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "MTF Aligned Bull", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, mtf_aligned_bull ? "✓ YES" : "✗ NO", text_color=mtf_aligned_bull ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "MTF Aligned Bear", text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, mtf_aligned_bear ? "✓ YES" : "✗ NO", text_color=mtf_aligned_bear ? color.green : color.red, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "────────", text_color=color.gray, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, "────────", text_color=color.gray, text_size=size.small)
+    debug_row := debug_row + 1
+
     table.cell(debug_table, 0, debug_row, "Bars Above VAH", text_color=color.white, text_size=size.small)
-    table.cell(debug_table, 1, debug_row, str.tostring(bars_above_vah), text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, str.tostring(bars_above_vah) + "/" + str.tostring(dynamic_acceptance_bars), text_color=color.white, text_size=size.small)
     debug_row := debug_row + 1
 
     table.cell(debug_table, 0, debug_row, "Bars Below VAL", text_color=color.white, text_size=size.small)
-    table.cell(debug_table, 1, debug_row, str.tostring(bars_below_val), text_color=color.white, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, str.tostring(bars_below_val) + "/" + str.tostring(dynamic_acceptance_bars), text_color=color.white, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "Vol vs Avg", text_color=color.white, text_size=size.small)
+    vol_ratio_current = vol_ma > 0 ? volume / vol_ma : 0
+    table.cell(debug_table, 1, debug_row, str.tostring(vol_ratio_current, "#.##") + "x", text_color=color.white, text_size=size.small)
+    debug_row := debug_row + 1
+
+    table.cell(debug_table, 0, debug_row, "────────", text_color=color.gray, text_size=size.small)
+    table.cell(debug_table, 1, debug_row, "────────", text_color=color.gray, text_size=size.small)
     debug_row := debug_row + 1
 
     table.cell(debug_table, 0, debug_row, "📊 FINAL SIGNAL", text_color=color.yellow, text_size=size.small)
