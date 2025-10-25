@@ -569,7 +569,7 @@ if barstate.islast
 
 show_debug = input.bool(true, "Show Debug Table", tooltip="Show signal breakdown for debugging")
 
-var table debug_table = table.new(position.bottom_left, 2, 18, bgcolor=color.new(color.black, 85), border_width=1)
+var table debug_table = table.new(position.bottom_left, 2, 20, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast and show_debug
     debug_row = 0
